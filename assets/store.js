@@ -218,8 +218,10 @@ export function getCriterionScore(candidate, criterionId) {
     const ratings = Object.entries(candidate.questionScores ?? {})
         .filter(([id]) => questionCriterionId(baseQuestionId(id)) === criterionId)
         .map(([, score]) => score);
+    // Keep the full mean for weighted calculations. Rounding each criterion first
+    // can shift the final score (e.g. six 4.25 means should total 85, not 86).
     if (ratings.length)
-        return Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10;
+        return ratings.reduce((a, b) => a + b, 0) / ratings.length;
     // Preserve legacy manual ratings from interviews recorded in the previous release.
     return candidate.criteriaScores[criterionId] ?? null;
 }
@@ -290,7 +292,7 @@ export function csvCell(value) {
 }
 export function resultsCsv(state) {
     const head = ['Slot', 'Name', 'Committee', 'Status', 'Decision', 'Coverage', 'Score / 100', ...CRITERIA.map(c => c.label), 'Asked questions', 'Notes'];
-    const rows = state.candidates.map(c => [c.slot, c.name, c.committee, c.status, c.decision, `${getCoverage(c)}/6`, getScore(c) ?? 'Not Evaluated', ...CRITERIA.map(cr => getCriterionScore(c, cr.id) ?? 'Not Evaluated'), c.questions.map((_, i) => questionAttemptKey(c, i)).filter(key => c.questionAsked[key]).join('; '), c.overallNotes]);
+    const rows = state.candidates.map(c => [c.slot, c.name, c.committee, c.status, c.decision, `${getCoverage(c)}/6`, getScore(c) ?? 'Not Evaluated', ...CRITERIA.map(cr => { const rating = getCriterionScore(c, cr.id); return rating === null ? 'Not Evaluated' : Math.round(rating * 10000) / 10000; }), c.questions.map((_, i) => questionAttemptKey(c, i)).filter(key => c.questionAsked[key]).join('; '), c.overallNotes]);
     return '\uFEFF' + [head, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');
 }
 export function detailedCsv(state) {

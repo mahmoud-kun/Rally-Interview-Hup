@@ -157,3 +157,32 @@ test('Export formula-injection protection and timer remain correct',()=>{
  const c=newCandidate(1);c.elapsedSeconds=8;c.timerRunningSince=1000;
  assert.equal(getElapsed(c,6000),13);pauseTimer(c,6000);assert.equal(c.elapsedSeconds,13);
 });
+
+
+test('Weighted result uses full criterion averages before final rounding',()=>{
+ const c=newCandidate(21);
+ // Four rated attempts per criterion: 5, 4, 4, 4 => true mean 4.25.
+ // The old intermediate rounding (4.3) incorrectly produced 86/100.
+ for(let i=0;i<23;i++)nextInterviewQuestion(c,seeded(i+12));
+ for(const criterion of CRITERIA){
+  const indices=c.questions.map((id,i)=>({id,i})).filter(x=>category(x.id)===criterion.id).map(x=>x.i);
+  assert.equal(indices.length,4);
+  indices.forEach((index,j)=>{c.questionScores[questionAttemptKey(c,index)]=j===0?5:4;});
+  assert.equal(getCriterionScore(c,criterion.id),4.25);
+ }
+ assert.equal(getCoverage(c),6);
+ assert.equal(getScore(c),85);
+ const persisted=validateState({version:1,candidates:[c],lastSavedAt:new Date().toISOString()}).candidates[0];
+ assert.equal(getScore(persisted),85);
+ assert(resultsCsv({version:1,candidates:[c],lastSavedAt:new Date().toISOString()}).includes('"85"'));
+});
+
+test('Unrated questions do not change coverage or weighted score',()=>{
+ const c=newCandidate(3);
+ c.questions.forEach((q,i)=>{if(i!==0)c.questionScores[questionAttemptKey(c,i)]=0;});
+ assert.equal(getCoverage(c),5);
+ assert.equal(getScore(c),null);
+ c.questionScores[questionAttemptKey(c,0)]=0;
+ assert.equal(getCoverage(c),6);
+ assert.equal(getScore(c),0);
+});
