@@ -6,11 +6,11 @@ A mobile-first, Arabic RTL interview workspace for **RALLY Menoufia · Operation
 
 ## What's included
 
-- Twelve editable candidate slots (placeholders, **not** real applicant records); additional candidates can be added.
+- 13 Operations applicants are available through an AES-256-GCM encrypted roster bundle. First-time import requires a separate passphrase; applicant names are never stored in plaintext in this public repository. The initial blank 12-slot state is retained until import.
 - The **six previously approved weighted criteria (15%, 20%, 20%, 15%, 15%, 15%)**, exactly sourced from the approved Operations interview bank.
-- **36 approved question/scenario cards**, including original TWIST / WATCH notes, organized into six categories.
-- **Twelve suggested three-question interview mixes**, preserving their original codes. Interviewers can select extra questions, mark questions asked, and write notes.
-- Auto-save for interviews and criterion ratings (0–5); **Not Evaluated is `null`, not zero**. The final weighted score / 100 is only displayed when all six criteria are rated.
+- **36 approved question/scenario cards**, including TWIST / WATCH notes, automatically queued for each interview with no three-card stop.
+- **Twelve suggested starting mixes** define the first questions, followed automatically by all remaining cards. Every card presents its own criterion, rating and notes in one screen.
+- Auto-save for per-question ratings (0–5); each question updates only its linked criterion. A criterion is the mean of scored questions in that category. **Not Evaluated is `null`, not zero**. The final weighted score / 100 is only displayed when all six criteria are rated.
 - Interview timer, completed/interrupted states, final decisions, filtered dashboard, rankings, CSV reports, and JSON backup/restore with validation.
 - Responsive views for desktop and mobile; no authentication, database, or external runtime JavaScript dependencies.
 
@@ -20,7 +20,7 @@ A mobile-first, Arabic RTL interview workspace for **RALLY Menoufia · Operation
 
 The **GitHub repository is public and this app is not access controlled**: the question bank and interviewer's TWIST/WATCH notes bundled in the app are viewable by anyone who can access the site or source code. The `noindex` meta tag does not provide security. Before using with confidential interview content, switch to a private code/data arrangement and introduce server-side authentication and access controls.
 
-No original applicants' names or private contact details are included in source control. The 12 initial slots are intentionally blank.
+No plaintext applicant names, emails or phone numbers are included in source control. The original 13 names are encrypted in `assets/operations-roster.enc.json`, decryptable only with the separately shared secret. Local browser storage remains unencrypted. Avoid sharing the passphrase or backups.
 
 ## Development
 
@@ -66,3 +66,12 @@ A completed interview without six criterion ratings stays **unranked** until its
 ## Deploy to Vercel
 
 Create or link a Vercel project to `mahmoud-kun/Rally-Interview-Hup` → `main`. Framework preset: `Other`; root directory: repository root; build command: **none**; output directory: repository root (`.`). Vercel automatically deploys future pushes to `main` once linked.
+
+## First-time Operations roster activation
+
+1. Open the deployed site, then choose **تحميل متقدمين Operations** from the Overview screen.
+2. Paste the separately delivered roster passphrase into the dialog.
+3. The 13 names are decrypted in the browser, merged with existing candidate slots without overwriting recorded interviews, and saved locally. Repeating the import will not create duplicates.
+4. After each interview day, export a JSON backup from Settings and store it securely. Never publish this backup or the passphrase in GitHub or a public chat.
+
+The app deliberately does **not** contain a shared backend or automatic cross-device roster synchronization. The published roster bundle is encrypted at rest; after import, the localStorage copy is **not encrypted**. The passphrase is not stored in the repository or on Vercel.

@@ -1,5 +1,5 @@
 import { CRITERIA, QUESTIONS } from './data/bank.js';
-import { initialState, loadState, persistState, newCandidate, getCoverage, getScore, getElapsed, pauseTimer, resultsCsv, detailedCsv, validateState } from './store.js';
+import { initialState, loadState, persistState, newCandidate, getCoverage, getScore, mergeCandidateRoster, getElapsed, pauseTimer, resultsCsv, detailedCsv, validateState } from './store.js';
 const $ = (s) => document.querySelector(s);
 const app = $('#app');
 const stored = loadState();
@@ -92,11 +92,11 @@ function overview() {
     const started = state.candidates.filter(c => c.status === 'in_progress').length;
     const scored = state.candidates.filter(c => getScore(c) !== null).length;
     const filtered = state.candidates.filter(c => activeFilter === 'all' || c.status === activeFilter);
-    shell(`<div class="page-head"><div><div class="eyebrow">OVERVIEW <span class="eyebrow-separator"></span> SEASON 2026</div><h1>المقابلات، <span>بشكل أوضح.</span></h1><p class="page-subtitle">كل متقدم، وكل سؤال، وكل تقييم في مكان واحد. علشان تركز في الإجابات مش في الورق.</p></div><button class="button primary head-button" data-action="add-candidate">${ic('plus')} إضافة متقدم</button></div>
+    shell(`<div class="page-head"><div><div class="eyebrow">OVERVIEW <span class="eyebrow-separator"></span> SEASON 2026</div><h1>المقابلات، <span>بشكل أوضح.</span></h1><p class="page-subtitle">كل متقدم، وكل سؤال، وكل تقييم في مكان واحد. علشان تركز في الإجابات مش في الورق.</p></div><div class="overview-actions"><button class="button secondary" data-action="import-roster">${ic('users')} تحميل متقدمين Operations</button><button class="button primary head-button" data-action="add-candidate">${ic('plus')} إضافة متقدم</button></div></div>
   <section class="stats-grid" aria-label="ملخص المقابلات">${statCard('إجمالي المتقدمين', state.candidates.length, 'موجودين في القائمة', 'users')}${statCard('مقابلات مكتملة', complete, 'تم إنهاء المقابلة', 'check')}${statCard('قيد التنفيذ', started, 'يمكن استكمالها', 'clock')}${statCard('تقييمات كاملة', scored, 'الـ6 معايير اتقاسوا', 'chart')}</section>
   <div class="columns-layout"><section class="panel candidates-panel"><div class="section-bar"><div><div class="section-overline">CANDIDATES</div><h2>قائمة المتقدمين <span class="count-label">${filtered.length}</span></h2></div><div class="filter-wrap"><label class="sr-only" for="candidate-filter">فلترة المقابلات</label><select id="candidate-filter" data-change="filter" class="soft-select"><option value="all" ${activeFilter === 'all' ? 'selected' : ''}>الكل</option><option value="not_started" ${activeFilter === 'not_started' ? 'selected' : ''}>لم تبدأ</option><option value="in_progress" ${activeFilter === 'in_progress' ? 'selected' : ''}>جارية</option><option value="completed" ${activeFilter === 'completed' ? 'selected' : ''}>مكتملة</option></select></div></div>
   <div class="candidate-list">${filtered.map((c) => `<div class="candidate-row"><div class="candidate-avatar">${String(c.slot).padStart(2, '0')}</div><div class="candidate-meta"><strong>${esc(slotLabel(c))}</strong><span>${esc(c.committee)} <span class="dot-divider">·</span> ${c.startedAt ? 'تم البدء' : 'جاهز للمقابلة'}</span></div><div class="candidate-status">${statusBadge(c.status)}</div><button class="candidate-cta" data-action="open-candidate" data-id="${esc(c.id)}" aria-label="${c.status === 'completed' ? 'راجع' : 'افتح'} مقابلة ${esc(slotLabel(c))}">${c.status === 'not_started' ? 'ابدأ' : c.status === 'in_progress' ? 'كمّل' : 'راجع'} ${ic('arrow', 17)}</button></div>`).join('') || `<div class="empty-state">مفيش متقدمين في الفلتر ده.</div>`}</div></section>
-  <aside class="aside-panel"><div class="briefing-panel"><div class="briefing-index"><span>INTERVIEW GUIDE</span><span>01 / 03</span></div><div class="briefing-icon">${ic('book', 24)}</div><h2>خليك مركز<br>في المهم.</h2><p>متوسط المقابلة 15 دقيقة. اختار 3 أسئلة متنوعة، وسجّل دليل واضح لكل معيار اتقاس.</p><div class="guide-detail"><span>المدة المقترحة</span><strong>15 min</strong></div><div class="guide-detail"><span>معايير التقييم</span><strong>06 criteria</strong></div><a href="#bank" class="guide-link">استعرض الأسئلة ${ic('arrow', 17)}</a></div><div class="local-note">${ic('info', 18)}<span>الحفظ حاليًا على نفس المتصفح والجهاز فقط. اعمل Backup بعد المقابلات.</span></div></aside></div>`, 'overview');
+  <aside class="aside-panel"><div class="briefing-panel"><div class="briefing-index"><span>INTERVIEW GUIDE</span><span>01 / 03</span></div><div class="briefing-icon">${ic('book', 24)}</div><h2>خليك مركز<br>في المهم.</h2><p>متوسط المقابلة 15 دقيقة. الأسئلة بتظهر تلقائيًا واحدة ورا التانية، والتقييم مرتبط بالسؤال اللي بتسأله.</p><div class="guide-detail"><span>المدة المقترحة</span><strong>15 min</strong></div><div class="guide-detail"><span>معايير التقييم</span><strong>06 criteria</strong></div><a href="#bank" class="guide-link">استعرض الأسئلة ${ic('arrow', 17)}</a></div><div class="local-note">${ic('info', 18)}<span>الحفظ حاليًا على نفس المتصفح والجهاز فقط. اعمل Backup بعد المقابلات.</span></div></aside></div>`, 'overview');
 }
 function panelHeading(kicker, title, trailing = '') { return `<div class="section-bar"><div><div class="section-overline">${kicker}</div><h2>${title}</h2></div>${trailing}</div>`; }
 function formatTime(seconds) { const s = Math.floor(seconds); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; }
@@ -119,13 +119,34 @@ function interview(id) {
         c.timerRunningSince = Date.now();
         save();
     }
-    const currentId = c.questions[c.questionIndex] ?? null;
-    const q = QUESTIONS.find(q => q.id === currentId);
-    shell(`<div class="interview-top"><button class="back-link" data-action="back-overview">${ic('arrow', 16)} كل المتقدمين</button><span class="interview-label">INTERVIEW ${String(c.slot).padStart(2, '0')} <span> / OPERATIONS</span></span></div>
-  <div class="interview-heading"><div><div class="eyebrow">ACTIVE SESSION</div><div class="interview-title-row"><h1>${esc(slotLabel(c))}</h1><button class="icon-button name-edit" data-action="rename" aria-label="تعديل اسم المتقدم">${ic('edit', 18)}</button></div><div class="interview-description">${statusBadge(c.status)} <span>·</span> ${c.questions.length} أسئلة مختارة <span>·</span> ${getCoverage(c)} / 6 معايير</div></div><div class="interview-actions"><div class="timer-box">${ic('clock', 18)}<time id="timer-readout" aria-label="مدة المقابلة">${formatTime(getElapsed(c))}</time><button data-action="toggle-timer" class="timer-button" aria-label="${c.timerRunningSince ? 'إيقاف' : 'تشغيل'} المؤقت" title="${c.timerRunningSince ? 'إيقاف' : 'تشغيل'} المؤقت">${ic(c.timerRunningSince ? 'pause' : 'play', 17)}</button></div><button class="button finish-button" data-action="finish" ${c.status === 'completed' ? 'disabled' : ''}>${ic('check', 17)} ${c.status === 'completed' ? 'تم الإنهاء' : 'إنهاء المقابلة'}</button></div></div>
-  <div class="interview-grid"><section class="interview-left"><div class="panel question-panel">${panelHeading('QUESTION SEQUENCE', 'الأسئلة المختارة', `<button class="small-action" data-action="pick-question">${ic('plus', 16)} إضافة سؤال</button>`)}<div class="question-steps">${c.questions.map((id, i) => questionStep(c, id, i)).join('')}</div>${q ? `<div class="live-question"><div class="question-topline"><div class="question-kind"><span>${esc(q.id)}</span><span>${esc(TYPE_LABEL[q.kind])}</span></div><span class="question-count">${c.questionIndex + 1} / ${c.questions.length}</span></div><p class="question-category">${esc(q.category)}</p><h2 class="question-text">${esc(q.text)}</h2><div class="question-tools"><button class="disclosure-button ${expandedTwist ? 'open' : ''}" data-action="toggle-twist" aria-expanded="${expandedTwist}">${ic('plus', 16)} Twist / متغير ${ic('chevron', 16)}</button><button class="disclosure-button ${expandedWatch ? 'open' : ''}" data-action="toggle-watch" aria-expanded="${expandedWatch}">${ic('info', 16)} Watch for ${ic('chevron', 16)}</button></div>${expandedTwist ? `<div class="reveal-box"><span>TWIST</span><p>${esc(q.twist)}</p></div>` : ''}${expandedWatch ? `<div class="reveal-box watch-box"><span>WATCH FOR</span><p>${esc(q.watch)}</p></div>` : ''}<div class="answer-notes"><div class="notes-label"><label for="question-notes">ملاحظاتك على الإجابة</label><span>يتم الحفظ تلقائيًا</span></div><textarea id="question-notes" data-bind="question-note" data-question="${q.id}" rows="4" placeholder="اكتب أهم النقاط أو القرارات اللي قالها المتقدم...">${esc(c.questionNotes[q.id] ?? '')}</textarea></div><div class="question-footer"><button class="asked-button ${c.questionAsked[q.id] ? 'asked' : ''}" data-action="mark-asked">${ic(c.questionAsked[q.id] ? 'check' : 'plus', 17)} ${c.questionAsked[q.id] ? 'تم طرح السؤال' : 'علّم السؤال كمطروح'}</button><div class="question-nav"><button class="icon-button" data-action="prev-question" aria-label="السؤال السابق" ${c.questionIndex === 0 ? 'disabled' : ''}>${ic('arrow', 18)}</button><button class="button primary next-button" data-action="next-question" ${c.questionIndex === c.questions.length - 1 ? 'disabled' : ''}>السؤال التالي ${ic('arrow', 18)}</button></div><button class="score-jump" data-action="jump-scores">${ic('chart', 17)} الانتقال للتقييم ${ic('arrow', 16)}</button></div></div>` : `<div class="empty-state">مفيش أسئلة حاليًا. ضيف سؤال من بنك الأسئلة.</div>`}</div>
-    <section class="panel general-notes">${panelHeading('SESSION NOTES', 'ملاحظات عامة')}<label class="sr-only" for="general-notes">ملاحظات عامة على المتقدم</label><textarea id="general-notes" data-bind="general-notes" rows="3" placeholder="ملخص سريع عن نقاط القوة، نقاط التحسين، أو أي ملاحظة مهمة...">${esc(c.overallNotes)}</textarea></section></section>
-  <aside>${scoreCard(c)}</aside></div>`, 'overview');
+    const q = QUESTIONS.find(q => q.id === c.questions[c.questionIndex]);
+    const criterion = q ? CRITERIA.find(k => k.id === q.criterionId) : undefined;
+    const grade = q ? c.questionScores?.[q.id] : undefined;
+    const count = c.questions.length;
+    const visited = Object.keys(c.questionScores ?? {}).length;
+    app.innerHTML = `<a href="#interview-main" class="skip-link">انتقل إلى السؤال</a><div class="session-shell">
+    <header class="session-header">
+      <button class="session-back" data-action="back-overview" aria-label="العودة لقائمة المتقدمين">${ic('arrow', 18)} <span>المتقدمين</span></button>
+      <div class="session-identity"><strong>${esc(slotLabel(c))}</strong><small>OPERATIONS · ${String(c.slot).padStart(2, '0')}</small></div>
+      <div class="session-header-actions"><div class="session-timer"><time id="timer-readout">${formatTime(getElapsed(c))}</time><button data-action="toggle-timer" aria-label="${c.timerRunningSince ? 'إيقاف' : 'تشغيل'} المؤقت">${ic(c.timerRunningSince ? 'pause' : 'play', 16)}</button></div><button class="session-finish" data-action="finish" ${c.status === 'completed' ? 'disabled' : ''}>${c.status === 'completed' ? 'مكتملة' : 'إنهاء'}</button></div>
+    </header>
+    <main class="session-content" id="interview-main">
+      ${q && criterion ? `<section class="focus-question" aria-label="بطاقة السؤال">
+        <div class="focus-kicker"><div><span class="focus-code">${esc(q.id)}</span><span class="focus-type">${esc(TYPE_LABEL[q.kind])}</span></div><span>${c.questionIndex + 1} / ${count}</span></div>
+        <div class="focus-scroll"><h1 class="focus-prompt">${esc(q.text)}</h1>
+          <div class="focus-guidance"><div><strong>TWIST / متغير</strong><p>${esc(q.twist)}</p></div><div><strong>WATCH / ملاحظة</strong><p>${esc(q.watch)}</p></div></div>
+        </div>
+        <div class="focus-assessment"><div class="focus-criterion"><div><small>CRITERION · ${criterion.weight}%</small><strong dir="ltr">${esc(criterion.label)}</strong></div><span>${grade === undefined ? 'غير مُقيّم' : grade + ' / 5'}${grade === undefined ? '' : ` · <button class="link-button" data-action="clear-question-rate" data-question="${esc(q.id)}" aria-label="مسح تقييم السؤال">مسح</button>`}</span></div>
+          <div class="focus-ratings" role="group" aria-label="تقييم ${esc(criterion.label)} للسؤال ${esc(q.id)}">${Array.from({ length: 6 }, (_, n) => `<button class="focus-score ${grade === n ? 'selected' : ''}" type="button" aria-pressed="${grade === n}" data-action="rate-question" data-score="${n}" data-question="${esc(q.id)}">${n}</button>`).join('')}</div>
+          <div class="focus-note-row"><label for="focus-note">ملاحظاتك على الإجابة</label><span>حفظ تلقائي</span></div>
+          <textarea id="focus-note" data-bind="question-note" data-question="${esc(q.id)}" rows="2" placeholder="ملاحظة سريعة عن إجابته...">${esc(c.questionNotes[q.id] ?? '')}</textarea>
+        </div>
+      </section>` : `<div class="empty-state">مفيش أسئلة. افتح بنك الأسئلة لإضافة أسئلة.</div>`}
+      <footer class="session-controls"><button class="session-previous" data-action="prev-question" aria-label="السؤال السابق">${ic('arrow', 18)} السابق</button><div class="session-progress"><strong>${visited}</strong><span>أسئلة متقيّمة</span><small>${getCoverage(c)} / 6 معايير</small></div><button class="session-next" data-action="next-question">التالي ${ic('arrow', 18)}</button></footer>
+    </main>
+  </div><div id="modal-root"></div>`;
+    if (persistError)
+        $('.session-content')?.insertAdjacentHTML('afterbegin', `<div class="notice danger">${esc(persistError)}</div>`);
 }
 function bankQuestionCard(q, id) { return `<article class="bank-card"><div class="bank-card-header"><span class="question-code">${q.id}</span><span class="type-tag">${esc(TYPE_LABEL[q.kind])}</span></div><p class="bank-category">${esc(q.category)}</p><h3>${esc(q.text)}</h3><div class="bank-card-footer"><span>${ic('book', 15)} ${esc(CRITERIA.find(c => c.id === q.criterionId)?.label)}</span>${id ? `<button class="mini-button" data-action="add-question" data-id="${esc(id)}" data-question="${q.id}">${ic('plus', 15)} إضافة</button>` : ''}</div></article>`; }
 function getFilteredQuestions() { return QUESTIONS.filter(q => (bankCategory === 'all' || q.criterionId === bankCategory) && (!bankQuery || [q.id, q.text, q.category, q.twist].some(t => t.toLowerCase().includes(bankQuery.toLowerCase())))); }
@@ -140,7 +161,7 @@ function results() {
  <div class="results-note">${ic('info', 18)} ملف CSV مناسب للفتح في Excel. لحفظ كل الملاحظات والأسئلة والمقابلات لاسترجاعها لاحقًا، استخدم Backup JSON من صفحة البيانات.</div>`, 'results');
 }
 function decisionOptions(current) { return Object.entries(DECISION_LABEL).map(([v, l]) => `<option value="${v}" ${v === current ? 'selected' : ''}>${esc(l)}</option>`).join(''); }
-function settings() { shell(`<div class="page-head"><div><div class="eyebrow">DATA & PRIVACY</div><h1>بياناتك <span>في إيدك.</span></h1><p class="page-subtitle">النسخة الحالية مخصصة لاستخدام شخص واحد على جهاز واحد، من غير حسابات أو مزامنة سحابية.</p></div></div><div class="settings-grid"><section class="panel settings-panel">${panelHeading('BACKUP & RESTORE', 'النسخ الاحتياطي')}<p>صدّر نسخة JSON فيها كل المقابلات والدرجات والملاحظات. تقدر تسترجعها على نفس الجهاز أو جهاز تاني.</p><div class="setting-actions"><button class="button primary" data-action="export-json">${ic('download')} تحميل Backup JSON</button><button class="button secondary" data-action="import-json">${ic('upload')} استرجاع Backup</button></div><div class="notice"><span>${ic('info', 18)}</span> الاسترجاع بيستبدل البيانات الموجودة بالكامل، لذلك اعمل نسخة احتياطية الأول.</div></section><section class="panel settings-panel">${panelHeading('EXPORT', 'التقارير')}<p>حمّل تقرير التقييم النهائي أو تقرير مفصّل بالأسئلة اللي اخترتها والملاحظات المسجلة.</p><div class="setting-actions"><button class="button secondary" data-action="export-csv">${ic('download')} نتائج CSV</button><button class="button secondary" data-action="export-detail">${ic('download')} الأسئلة والملاحظات CSV</button></div></section><section class="panel settings-panel storage-panel">${panelHeading('STORAGE', 'طريقة الحفظ')}<div class="data-fact"><span>البيانات</span><strong>${state.candidates.length} متقدم</strong></div><div class="data-fact"><span>آخر حفظ</span><strong>${new Date(state.lastSavedAt).toLocaleString('ar-EG')}</strong></div><div class="data-fact"><span>المكان</span><strong>هذا المتصفح فقط</strong></div><p class="storage-warning">مسح بيانات المتصفح أو استخدام Incognito ممكن يمسح التقييمات. الموقع المنشور مش بيزامن البيانات بين الموبايل والكمبيوتر.</p></section><section class="panel settings-panel danger-zone">${panelHeading('DANGER ZONE', 'إعادة البدء')}<p>إرجاع القائمة الافتراضية المكونة من 12 مكان لمتقدمين، ومسح كل التقييمات والأسماء والملاحظات المحفوظة على الجهاز الحالي.</p><button class="button danger-button" data-action="reset-data">${ic('trash', 18)} مسح البيانات والبدء من جديد</button></section></div>`, 'settings'); }
+function settings() { shell(`<div class="page-head"><div><div class="eyebrow">DATA & PRIVACY</div><h1>بياناتك <span>في إيدك.</span></h1><p class="page-subtitle">النسخة الحالية مخصصة لاستخدام شخص واحد على جهاز واحد، من غير حسابات أو مزامنة سحابية.</p></div></div><div class="settings-grid"><section class="panel settings-panel">${panelHeading('BACKUP & RESTORE', 'النسخ الاحتياطي')}<p>صدّر نسخة JSON فيها كل المقابلات والدرجات والملاحظات. تقدر تسترجعها على نفس الجهاز أو جهاز تاني.</p><div class="setting-actions"><button class="button primary" data-action="export-json">${ic('download')} تحميل Backup JSON</button><button class="button secondary" data-action="import-json">${ic('upload')} استرجاع Backup</button><button class="button secondary" data-action="import-roster">${ic('users')} تحميل قائمة Operations</button></div><div class="notice"><span>${ic('info', 18)}</span> الاسترجاع بيستبدل البيانات الموجودة بالكامل، لذلك اعمل نسخة احتياطية الأول.</div></section><section class="panel settings-panel">${panelHeading('EXPORT', 'التقارير')}<p>حمّل تقرير التقييم النهائي أو تقرير مفصّل بالأسئلة اللي اخترتها والملاحظات المسجلة.</p><div class="setting-actions"><button class="button secondary" data-action="export-csv">${ic('download')} نتائج CSV</button><button class="button secondary" data-action="export-detail">${ic('download')} الأسئلة والملاحظات CSV</button></div></section><section class="panel settings-panel storage-panel">${panelHeading('STORAGE', 'طريقة الحفظ')}<div class="data-fact"><span>البيانات</span><strong>${state.candidates.length} متقدم</strong></div><div class="data-fact"><span>آخر حفظ</span><strong>${new Date(state.lastSavedAt).toLocaleString('ar-EG')}</strong></div><div class="data-fact"><span>المكان</span><strong>هذا المتصفح فقط</strong></div><p class="storage-warning">مسح بيانات المتصفح أو استخدام Incognito ممكن يمسح التقييمات. الموقع المنشور مش بيزامن البيانات بين الموبايل والكمبيوتر.</p></section><section class="panel settings-panel danger-zone">${panelHeading('DANGER ZONE', 'إعادة البدء')}<p>إرجاع القائمة الافتراضية المكونة من 12 مكان فارغ للمتقدمين، ومسح كل التقييمات والأسماء والملاحظات المحفوظة على الجهاز الحالي.</p><button class="button danger-button" data-action="reset-data">${ic('trash', 18)} مسح البيانات والبدء من جديد</button></section></div>`, 'settings'); }
 function render() { const path = route(); expandedTwist = false; expandedWatch = false; if (path.startsWith('interview/'))
     interview(path.slice(10));
 else if (path === 'bank')
@@ -160,6 +181,39 @@ function pickQuestionDialog(candidate) { pickQuery = ''; const current = new Set
 function endDialog(c) { const coverage = getCoverage(c); showDialog(`<div class="confirmation"><div class="confirm-icon">${ic(coverage === 6 ? 'check' : 'info', 25)}</div><p>${coverage === 6 ? 'تم تقييم المعايير الستة. يمكنك إنهاء الجلسة ومراجعة القرار من صفحة النتائج.' : `تم تقييم <b>${coverage} من 6</b> معايير فقط. تقدر تنهي الجلسة، لكن <b>مش هيظهر Total/100</b> لحد ما تكمل الباقي.`}</p></div>`, 'إنهاء المقابلة', `<button class="button secondary" data-action="close-dialog">إلغاء</button><button class="button primary" data-action="confirm-finish" data-id="${esc(c.id)}">تأكيد الإنهاء</button>`); }
 function addCandidateDialog() { showDialog(`<form id="add-candidate-form"><label class="form-label" for="candidate-name">اسم المتقدم</label><input class="text-field" id="candidate-name" name="name" maxlength="200" placeholder="اكتب اسم المتقدم" required><label class="form-label" for="candidate-committee">اللجنة</label><input class="text-field" id="candidate-committee" name="committee" maxlength="100" value="Operations" required></form>`, 'إضافة متقدم', `<button class="button secondary" data-action="close-dialog">إلغاء</button><button class="button primary" data-action="save-candidate">إضافة للقائمة</button>`); }
 function renameDialog(c) { showDialog(`<form id="rename-form"><label class="form-label" for="rename-input">اسم المتقدم</label><input class="text-field" id="rename-input" name="name" maxlength="200" required value="${esc(c.name)}" placeholder="اسم المتقدم"></form>`, 'تعديل اسم المتقدم', `<button class="button secondary" data-action="close-dialog">إلغاء</button><button class="button primary" data-action="save-name" data-id="${esc(c.id)}">حفظ الاسم</button>`); }
+function unlockRosterDialog() { showDialog(`<p>ملف Operations مؤمّن، والأسماء مش منشورة بشكل مكشوف على GitHub. ادخل مفتاح الاستيراد مرة واحدة علشان تضاف القائمة على جهازك.</p><label class="form-label" for="roster-pass">مفتاح قائمة Operations</label><input type="password" id="roster-pass" class="text-field" autocomplete="off" placeholder="الصق المفتاح هنا" /><p class="muted-p">الاستيراد بيحافظ على تقييماتك الحالية، ومش بيكرر الأسماء.</p>`, 'تفعيل قائمة Operations', `<button class="button secondary" data-action="close-dialog">إلغاء</button><button class="button primary" data-action="confirm-roster">إضافة الـ13 متقدم</button>`); }
+async function unlockRoster(passphrase) {
+    if (!passphrase)
+        throw new Error('ادخل مفتاح القائمة.');
+    const response = await fetch('/assets/operations-roster.enc.json', { cache: 'no-store' });
+    if (!response.ok)
+        throw new Error('ملف القائمة مش متاح حاليًا.');
+    const bundle = await response.json();
+    if (bundle.version !== 1 || bundle.kdf !== 'PBKDF2-SHA256' || bundle.cipher !== 'AES-256-GCM' || bundle.iterations !== 310000)
+        throw new Error('نسخة القائمة غير مدعومة.');
+    const fromB64 = (value) => Uint8Array.from(atob(value), c => c.charCodeAt(0));
+    const keyMaterial = await crypto.subtle.importKey('raw', new TextEncoder().encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+    const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: fromB64(bundle.salt), iterations: bundle.iterations, hash: 'SHA-256' }, keyMaterial, { name: 'AES-GCM', length: 256 }, false, ['decrypt']);
+    let plaintext;
+    try {
+        plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(bundle.iv) }, key, fromB64(bundle.data));
+    }
+    catch {
+        throw new Error('المفتاح غير صحيح أو الملف تالف.');
+    }
+    const payload = JSON.parse(new TextDecoder().decode(plaintext));
+    if (payload.version !== 1 || !Array.isArray(payload.entries))
+        throw new Error('صيغة القائمة غير صحيحة.');
+    const safe = validateState(JSON.parse(JSON.stringify(state)));
+    const stats = mergeCandidateRoster(safe, payload.entries);
+    persistState(safe);
+    state = safe;
+    persistError = null;
+    closeDialog();
+    go('overview');
+    render();
+    toast(`تم تحميل القائمة: ${stats.imported} إضافة، ${stats.existing + stats.linked} موجودين.`);
+}
 function importDialog() { showDialog(`<p>اختار ملف JSON أصلي تم تصديره من Rally Interview Hub. هنتأكد من صحته قبل الاستبدال.</p><label class="form-label" for="import-file">ملف النسخة الاحتياطية</label><input class="text-field file-field" id="import-file" type="file" accept=".json,application/json"><div class="notice danger">تنبيه: الاسترجاع بيستبدل كل البيانات الحالية. حمّل Backup الأول لو محتاجه.</div>`, 'استرجاع البيانات', `<button class="button secondary" data-action="close-dialog">إلغاء</button><button class="button primary" data-action="confirm-import">استرجاع الملف</button>`); }
 function resetDialog() { showDialog(`<p>الخطوة دي هتمسح بيانات المتقدمين وتقييماتهم من المتصفح ده نهائيًا. اكتب <b>RESET</b> للتأكيد.</p><label class="form-label" for="reset-confirm">تأكيد الحذف</label><input id="reset-confirm" class="text-field" autocomplete="off" placeholder="RESET" />`, 'حذف البيانات', `<button class="button secondary" data-action="close-dialog">إلغاء</button><button class="button danger-button" data-action="confirm-reset">مسح نهائي</button>`); }
 function currentCandidate() { return route().startsWith('interview/') ? findCandidate(route().slice(10)) : undefined; }
@@ -236,15 +290,15 @@ function action(action, el) {
             }
             break;
         case 'next-question':
-            if (c) {
-                c.questionIndex = Math.min(c.questionIndex + 1, c.questions.length - 1);
+            if (c && c.questions.length) {
+                c.questionIndex = (c.questionIndex + 1) % c.questions.length;
                 save();
                 updateQuestionView();
             }
             break;
         case 'prev-question':
-            if (c) {
-                c.questionIndex = Math.max(c.questionIndex - 1, 0);
+            if (c && c.questions.length) {
+                c.questionIndex = (c.questionIndex - 1 + c.questions.length) % c.questions.length;
                 save();
                 updateQuestionView();
             }
@@ -290,11 +344,25 @@ function action(action, el) {
                 }
             }
             break;
-        case 'rate':
+        case 'clear-question-rate':
             if (c) {
-                const key = el.dataset.criterion, score = Number(el.dataset.score);
-                if (CRITERIA.some(x => x.id === key) && Number.isInteger(score) && score >= 0 && score <= 5) {
-                    c.criteriaScores[key] = score;
+                const code = el.dataset.question;
+                if (code && c.questionScores) {
+                    delete c.questionScores[code];
+                    save();
+                    updateQuestionView();
+                }
+            }
+            break;
+        case 'rate-question':
+            if (c) {
+                const code = el.dataset.question;
+                const score = Number(el.dataset.score);
+                if (code && c.questions.includes(code) && Number.isInteger(score) && score >= 0 && score <= 5) {
+                    if (!c.questionScores)
+                        c.questionScores = {};
+                    c.questionScores[code] = score;
+                    c.questionAsked[code] = true;
                     save();
                     updateQuestionView();
                 }
@@ -357,6 +425,22 @@ function action(action, el) {
             saveDownload(JSON.stringify(state, null, 2), 'rally-interview-backup.json', 'application/json;charset=utf-8');
             toast('تم تجهيز النسخة الاحتياطية.');
             break;
+        case 'import-roster':
+            unlockRosterDialog();
+            break;
+        case 'confirm-roster': {
+            const input = $('#roster-pass');
+            const val = input?.value ?? '';
+            if (!val) {
+                toast('ادخل مفتاح القائمة.', 'error');
+                return;
+            }
+            const button = el;
+            button.disabled = true;
+            button.textContent = 'جاري فك التشفير...';
+            unlockRoster(val).catch(e => { button.disabled = false; button.textContent = 'إضافة الـ13 متقدم'; toast(e instanceof Error ? e.message : 'تعذر الاستيراد.', 'error'); });
+            break;
+        }
         case 'import-json':
             importDialog();
             break;

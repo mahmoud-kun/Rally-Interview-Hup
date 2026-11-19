@@ -2,14 +2,33 @@ import { CRITERIA, PACKS, QUESTIONS } from './data/bank.js';
 export const STORAGE_KEY = 'rally-interview-hub-v1';
 export const CRITERION_IDS = CRITERIA.map(c => c.id);
 export const QUESTION_IDS = QUESTIONS.map(q => q.id);
+export function questionSequence(slot) {
+    const first = [...(PACKS[(slot - 1) % PACKS.length] ?? PACKS[0])];
+    for (const criterion of CRITERIA) {
+        if (!first.some(id => QUESTIONS.find(q => q.id === id)?.criterionId === criterion.id)) {
+            const option = QUESTIONS.find(q => q.criterionId === criterion.id && !first.includes(q.id));
+            if (option)
+                first.push(option.id);
+        }
+    }
+    // A complete queue from day one, without requiring manual card additions.
+    for (let index = 0; index < 6; index++) {
+        const criterion = CRITERIA[(index + slot - 1) % CRITERIA.length];
+        for (const question of QUESTIONS.filter(q => q.criterionId === criterion.id)) {
+            if (!first.includes(question.id))
+                first.push(question.id);
+        }
+    }
+    return first;
+}
 const QUESTION_SET = new Set(QUESTION_IDS);
 export function newCandidate(slot, name = '', committee = 'Operations') {
     const scores = {};
     const evidence = {};
     CRITERIA.forEach(c => { scores[c.id] = null; evidence[c.id] = ''; });
     return { id: `candidate-${slot}-${Math.random().toString(36).slice(2, 10)}`, slot, name, committee,
-        status: 'not_started', questions: [...(PACKS[(slot - 1) % PACKS.length] ?? PACKS[0])],
-        questionIndex: 0, questionNotes: {}, questionAsked: {}, criteriaScores: scores,
+        status: 'not_started', questions: questionSequence(slot),
+        questionIndex: 0, questionNotes: {}, questionAsked: {}, questionScores: {}, criteriaScores: scores,
         criteriaEvidence: evidence, overallNotes: '', decision: 'pending', startedAt: null,
         finishedAt: null, elapsedSeconds: 0, timerRunningSince: null };
 }
@@ -61,6 +80,18 @@ export function validateState(raw) {
         const questionNotes = strRecord(c.questionNotes);
         if (Object.keys(questionNotes).some(k => !QUESTION_SET.has(k)))
             throw new Error('ملاحظات مرتبطة بسؤال غير معروف.');
+        const scoreRecord = c.questionScores === undefined ? {} : c.questionScores;
+        if (!scoreRecord || typeof scoreRecord !== 'object' || Array.isArray(scoreRecord))
+            throw new Error('درجات الأسئلة غير صالحة.');
+        const questionScores = {};
+        for (const [key, value] of Object.entries(scoreRecord)) {
+            if (!QUESTION_SET.has(key) || typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 5)
+                throw new Error('درجة سؤال غير صالحة.');
+            questionScores[key] = value;
+        }
+        const rosterKey = c.rosterKey === undefined ? undefined : c.rosterKey;
+        if (rosterKey !== undefined && (typeof rosterKey !== 'string' || !/^OP-[0-9]{1,4}$/.test(rosterKey)))
+            throw new Error('معرّف القائمة غير صالح.');
         const criteriaEvidence = strRecord(c.criteriaEvidence);
         if (Object.keys(criteriaEvidence).some(k => !CRITERION_IDS.includes(k)))
             throw new Error('دليل مرتبط بمعيار غير معروف.');
@@ -83,9 +114,9 @@ export function validateState(raw) {
         const date = (value) => value === null ? null : (typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : (() => { throw new Error('تاريخ غير صالح.'); })());
         return {
             id: c.id, slot: c.slot, name: c.name, committee: c.committee,
-            status: c.status, questions: c.questions,
+            status: c.status, questions: [...c.questions, ...questionSequence(c.slot).filter(id => !c.questions.includes(id))],
             questionIndex: Math.max(0, Math.min(Number(c.questionIndex), Math.max(0, c.questions.length - 1))),
-            questionNotes, questionAsked, criteriaScores: scores, criteriaEvidence,
+            questionNotes, questionAsked, questionScores, rosterKey: rosterKey, criteriaScores: scores, criteriaEvidence,
             overallNotes: c.overallNotes, decision: c.decision,
             startedAt: date(c.startedAt), finishedAt: date(c.finishedAt),
             elapsedSeconds: elapsed, timerRunningSince: since
@@ -106,12 +137,65 @@ export function persistState(state) {
     state.lastSavedAt = new Date().toISOString();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
-export function getCoverage(candidate) { return CRITERIA.filter(c => candidate.criteriaScores[c.id] !== null).length; }
+export function getCriterionScore(candidate, criterionId) {
+    const ratings = Object.entries(candidate.questionScores ?? {})
+        .filter(([id]) => QUESTIONS.find(q => q.id === id)?.criterionId === criterionId)
+        .map(([, score]) => score);
+    if (ratings.length)
+        return Math.round((ratings.reduce((a, b) => a + b, 0) / ratings.length) * 10) / 10;
+    // Preserve legacy manual ratings from interviews recorded in the previous release.
+    return candidate.criteriaScores[criterionId] ?? null;
+}
+export function getCoverage(candidate) { return CRITERIA.filter(c => getCriterionScore(candidate, c.id) !== null).length; }
 export function getScore(candidate) {
     if (getCoverage(candidate) !== CRITERIA.length)
         return null;
-    const score = CRITERIA.reduce((sum, c) => sum + ((candidate.criteriaScores[c.id] ?? 0) / 5) * c.weight, 0);
+    const score = CRITERIA.reduce((sum, c) => sum + ((getCriterionScore(candidate, c.id) ?? 0) / 5) * c.weight, 0);
     return Math.round(score * 10) / 10;
+}
+export function mergeCandidateRoster(state, entries) {
+    if (!Array.isArray(entries) || entries.length === 0 || entries.length > 100)
+        throw new Error('قائمة المتقدمين غير صالحة.');
+    const ids = new Set();
+    const names = new Set();
+    const normalize = (name) => name.trim().toLocaleLowerCase().replace(/\s+/g, ' ');
+    let imported = 0, linked = 0, existing = 0;
+    for (const row of entries) {
+        if (!row || typeof row.sourceId !== 'string' || !/^OP-[0-9]{1,4}$/.test(row.sourceId) || typeof row.name !== 'string' || !row.name.trim() || row.name.length > 200 || row.committee !== 'Operations')
+            throw new Error('بيانات القائمة غير صالحة.');
+        const name = normalize(row.name);
+        if (ids.has(row.sourceId) || names.has(name))
+            throw new Error('فيه متقدم مكرر في الملف.');
+        ids.add(row.sourceId);
+        names.add(name);
+    }
+    for (const row of entries) {
+        const byId = state.candidates.find(c => c.rosterKey === row.sourceId);
+        if (byId) {
+            existing++;
+            continue;
+        }
+        const match = state.candidates.find(c => normalize(c.name) === normalize(row.name) && c.committee === 'Operations');
+        if (match) {
+            match.rosterKey = row.sourceId;
+            linked++;
+            continue;
+        }
+        const empty = state.candidates.find(c => !c.name.trim() && c.status === 'not_started' && !c.startedAt && c.decision === 'pending' && Object.keys(c.questionScores ?? {}).length === 0 && Object.values(c.questionNotes).every(x => !x) && !c.overallNotes);
+        if (empty) {
+            empty.name = row.name.trim();
+            empty.rosterKey = row.sourceId;
+            empty.committee = 'Operations';
+        }
+        else {
+            const slot = Math.max(0, ...state.candidates.map(c => c.slot)) + 1;
+            const candidate = newCandidate(slot, row.name.trim());
+            candidate.rosterKey = row.sourceId;
+            state.candidates.push(candidate);
+        }
+        imported++;
+    }
+    return { imported, linked, existing };
 }
 export function getElapsed(candidate, now = Date.now()) {
     return Math.max(0, candidate.elapsedSeconds + (candidate.timerRunningSince ? Math.max(0, (now - candidate.timerRunningSince) / 1000) : 0));
@@ -129,16 +213,16 @@ export function csvCell(value) {
 }
 export function resultsCsv(state) {
     const head = ['Slot', 'Name', 'Committee', 'Status', 'Decision', 'Coverage', 'Score / 100', ...CRITERIA.map(c => c.label), 'Asked questions', 'Notes'];
-    const rows = state.candidates.map(c => [c.slot, c.name, c.committee, c.status, c.decision, `${getCoverage(c)}/6`, getScore(c) ?? 'Not Evaluated', ...CRITERIA.map(cr => c.criteriaScores[cr.id] ?? 'Not Evaluated'), c.questions.filter(q => c.questionAsked[q]).join('; '), c.overallNotes]);
+    const rows = state.candidates.map(c => [c.slot, c.name, c.committee, c.status, c.decision, `${getCoverage(c)}/6`, getScore(c) ?? 'Not Evaluated', ...CRITERIA.map(cr => getCriterionScore(c, cr.id) ?? 'Not Evaluated'), c.questions.filter(q => c.questionAsked[q]).join('; '), c.overallNotes]);
     return '\uFEFF' + [head, ...rows].map(r => r.map(csvCell).join(',')).join('\r\n');
 }
 export function detailedCsv(state) {
-    const rows = [['Slot', 'Name', 'Question code', 'Type', 'Question', 'Asked', 'Interviewer notes']];
+    const rows = [['Slot', 'Name', 'Question code', 'Type', 'Question', 'Asked', 'Question score / 5', 'Criterion', 'Interviewer notes']];
     for (const c of state.candidates)
         for (const code of c.questions) {
             const q = QUESTIONS.find(x => x.id === code);
             if (q)
-                rows.push([c.slot, c.name, code, q.kind, q.text, c.questionAsked[code] ? 'Yes' : 'No', c.questionNotes[code] ?? '']);
+                rows.push([c.slot, c.name, code, q.kind, q.text, c.questionAsked[code] ? 'Yes' : 'No', c.questionScores?.[code] ?? 'Not Evaluated', CRITERIA.find(cr => cr.id === q.criterionId)?.label ?? '', c.questionNotes[code] ?? '']);
         }
     return '\uFEFF' + rows.map(row => row.map(csvCell).join(',')).join('\r\n');
 }
