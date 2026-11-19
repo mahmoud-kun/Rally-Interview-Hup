@@ -8,8 +8,9 @@ A mobile-first, Arabic RTL interview workspace for **RALLY Menoufia · Operation
 
 - 13 Operations applicants are available through an AES-256-GCM encrypted roster bundle. First-time import requires a separate passphrase; applicant names are never stored in plaintext in this public repository. The initial blank 12-slot state is retained until import.
 - The **six previously approved weighted criteria (15%, 20%, 20%, 15%, 15%, 15%)**, exactly sourced from the approved Operations interview bank.
-- **36 approved question/scenario cards**, including TWIST / WATCH notes, automatically queued for each interview with no three-card stop.
-- **Twelve suggested starting mixes** define the first questions, followed automatically by all remaining cards. Every card presents its own criterion, rating and notes in one screen.
+- **15 selected questions/scenarios exactly from the president-facing PDF**, preserving their original optional TWIST/WATCH hints. The older 36-card bank is retired from active selection.
+- A randomized **six-criterion round-robin**: every six consecutive newly generated cards contain one question for each criterion, in a freshly shuffled order. After card 6, the next six are generated automatically, for as long as the interviewer continues.
+- Question selection favors **least-used alternatives within that criterion**. If a question reappears in a later round, its score and interviewer notes are stored as a separate attempt, with no overwrite.
 - Auto-save for per-question ratings (0–5); each question updates only its linked criterion. A criterion is the mean of scored questions in that category. **Not Evaluated is `null`, not zero**. The final weighted score / 100 is only displayed when all six criteria are rated.
 - Interview timer, completed/interrupted states, final decisions, filtered dashboard, rankings, CSV reports, and JSON backup/restore with validation.
 - Responsive views for desktop and mobile; no authentication, database, or external runtime JavaScript dependencies.
@@ -44,18 +45,18 @@ Use a local TypeScript installation instead of `npx` in offline environments (`t
 
 | Path | Purpose |
 | --- | --- |
-| `src/data/bank.ts` | Canonical approved questions, criterion weights and interview packs |
+| `src/data/bank.ts` | The exact 15 questions from the approved board PDF and the six weighted criteria |
 | `src/store.ts` | Validated data model, score computation, persistence and export functions |
 | `src/app.ts` | Views, navigation, timer and event handling |
 | `assets/` | Checked-in compiled ES modules and stylesheet for static hosting |
 | `docs/DESIGN_SYSTEM.md` | Approved visual/interaction system and skill-derived constraints |
 | `docs/QA_REPORT.md` | Verification details and unverified limits |
 
-When updating the questionnaire, **do not silently replace or invent approved criteria/questions**. Version changes to data schema require a migration before deploying; `validateState` currently supports version 1.
+When updating the questionnaire, **do not silently replace or invent approved criteria/questions**. The internal localStorage envelope remains version 1, while candidate records use `bankVersion: 2` for the fifteen-card generator. Loading a previous 36-card backup performs a one-time migration, keeping historical ratings, interviewer notes, and the retired question queue in `archivedQuestions`. Scores from previous answers are preserved; retired questions cannot be selected for new rounds.
 
 ## Scoring
 
-Each criterion is an integer score `0..5` or `null` (Not Evaluated). Once all six have a score:
+Each **question attempt** has a rating `0..5` or is unrated (Not Evaluated). For each criterion, take the average of its rated attempts (historical data included when restoring an older interview), then apply the weight. Once all six have a score:
 
 ```text
 overall / 100 = Σ [(criterionScore / 5) × criterionWeight]

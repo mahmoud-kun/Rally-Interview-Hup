@@ -17,7 +17,7 @@ Design based on the user's uploaded `ui-ux-pro-max` skill (`SKILL.md`, `referenc
 ## Interaction & information hierarchy
 
 1. **Focus-first:** dashboard shows candidate slot, status and action, not graphs or performative metrics. One visually dominant action on each screen.
-2. **Questions:** 36-card automatic queue that continues until explicit finish; TWIST/WATCH and one criterion-specific 0–5 rating are visible alongside the current question.
+2. **Questions:** 15 approved cards, delivered as randomized six-criterion rounds that continue until explicit finish; TWIST/WATCH and one criterion-specific 0–5 rating are visible alongside the current question.
 3. **Assessment:** one per-question 0–5 scale tied to that question’s criterion, aggregated by criterion mean; zero is recorded and missing is *Not Evaluated*. Score only appears at 6/6 coverage. A completion with missing criteria is flagged for review rather than scored as zero.
 4. **Local data honesty:** visible local-only storage status, manual JSON backup/restore, explicit restore confirmation, CSV export with spreadsheet formula escaping.
 5. **Micro-feedback:** subtle hover/press, responsive button states, no decorative entrance animation. Reduced-motion media query disables visual transitions.

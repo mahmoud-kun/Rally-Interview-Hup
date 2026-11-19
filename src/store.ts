@@ -1,4 +1,4 @@
-import { CRITERIA, PACKS, QUESTIONS } from './data/bank.js';
+import { CRITERIA, QUESTIONS } from './data/bank.js';
 
 export type InterviewStatus = 'not_started' | 'in_progress' | 'completed';
 export type Decision = 'pending' | 'accepted' | 'rejected' | 'waitlist';
@@ -13,6 +13,8 @@ export interface Candidate {
   questionNotes: Record<string, string>;
   questionAsked: Record<string, boolean>;
   questionScores: Record<string, number>;
+  bankVersion?: 2;
+  archivedQuestions?: string[];
   rosterKey?: string;
   criteriaScores: Record<string, number | null>;
   criteriaEvidence: Record<string, string>;
@@ -28,32 +30,73 @@ export const STORAGE_KEY = 'rally-interview-hub-v1';
 export const CRITERION_IDS: string[] = CRITERIA.map(c => c.id);
 export const QUESTION_IDS: string[] = QUESTIONS.map(q => q.id);
 
-export function questionSequence(slot: number): string[] {
-  const first: string[] = [...(PACKS[(slot-1)%PACKS.length] ?? PACKS[0])];
-  for (const criterion of CRITERIA) {
-    if (!first.some(id=>QUESTIONS.find(q=>q.id===id)?.criterionId===criterion.id)) {
-      const option = QUESTIONS.find(q=>q.criterionId===criterion.id && !first.includes(q.id));
-      if (option) first.push(option.id);
-    }
-  }
-  // A complete queue from day one, without requiring manual card additions.
-  for (let index=0;index<6;index++) {
-    const criterion=CRITERIA[(index+slot-1)%CRITERIA.length];
-    for (const question of QUESTIONS.filter(q=>q.criterionId===criterion.id)) {
-      if (!first.includes(question.id)) first.push(question.id);
-    }
-  }
-  return first;
-}
-
+// All previously published OP-01..OP-36 IDs remain valid for historical notes and backups.
+// Only the fifteen approved questions can be selected for new interview rounds.
 const QUESTION_SET = new Set(QUESTION_IDS);
+function isHistoricalQuestion(id: string):boolean {
+  const match=/^OP-(\d{2})$/.exec(id);
+  return !!match && Number(match[1])>=1 && Number(match[1])<=36;
+}
+export function baseQuestionId(attemptKey:string):string {
+  return attemptKey.replace(/~[2-9][0-9]*$/, '');
+}
+function isValidAttemptKey(key:string):boolean {
+  if (!/^OP-\d{2}(?:~[2-9][0-9]*)?$/.test(key)) return false;
+  return isHistoricalQuestion(baseQuestionId(key));
+}
+function questionCriterionId(questionId:string):string|null {
+  const active=QUESTIONS.find(q=>q.id===questionId);
+  if(active)return active.criterionId;
+  if(!isHistoricalQuestion(questionId))return null;
+  const number=Number(questionId.slice(3));
+  return `c${Math.ceil(number/6)}`;
+}
+function shuffled<T>(items:readonly T[],random:()=>number):T[]{
+  const array=[...items];
+  for(let i=array.length-1;i>0;i--){
+    const j=Math.floor(Math.max(0,Math.min(0.999999999999,random()))*(i+1));
+    [array[i],array[j]]=[array[j],array[i]];
+  }
+  return array;
+}
+// Every six questions form one complete, randomly ordered cycle of the six criteria.
+// Within a criterion, choose the least-used approved question first.
+export function questionRound(history:readonly string[]=[],random:()=>number=Math.random):string[]{
+  return shuffled(CRITERIA,random).map(criterion=>{
+    const options=QUESTIONS.filter(q=>q.criterionId===criterion.id);
+    if(!options.length)throw new Error(`No approved questions for ${criterion.id}`);
+    const least=Math.min(...options.map(q=>history.filter(id=>id===q.id).length));
+    const choices=options.filter(q=>history.filter(id=>id===q.id).length===least);
+    return choices[Math.floor(Math.max(0,Math.min(0.999999999999,random()))*choices.length)].id;
+  });
+}
+export function questionSequence(_slot:number,random:()=>number=Math.random):string[]{
+  return questionRound([],random);
+}
+export function questionAttemptKey(candidate:Candidate,index:number):string{
+  const code=candidate.questions[index];
+  if(!code)return '';
+  let repeat=0;
+  for(let i=0;i<=index;i++)if(candidate.questions[i]===code)repeat++;
+  return repeat===1?code:`${code}~${repeat}`;
+}
+export function nextInterviewQuestion(candidate:Candidate,random:()=>number=Math.random):void{
+  if(candidate.status==='completed')return;
+  if(candidate.questionIndex>=candidate.questions.length-1){
+    candidate.questions.push(...questionRound(candidate.questions,random));
+  }
+  candidate.questionIndex=Math.min(candidate.questionIndex+1,candidate.questions.length-1);
+}
+export function previousInterviewQuestion(candidate:Candidate):void{
+  candidate.questionIndex=Math.max(0,candidate.questionIndex-1);
+}
 
 export function newCandidate(slot: number, name = '', committee = 'Operations'): Candidate {
   const scores: Record<string, number|null> = {};
   const evidence: Record<string, string> = {};
   CRITERIA.forEach(c => { scores[c.id] = null; evidence[c.id] = ''; });
   return { id: `candidate-${slot}-${Math.random().toString(36).slice(2, 10)}`, slot, name, committee,
-    status: 'not_started', questions: questionSequence(slot),
+    status: 'not_started', bankVersion:2, questions: questionSequence(slot),
     questionIndex: 0, questionNotes: {}, questionAsked: {}, questionScores: {}, criteriaScores: scores,
     criteriaEvidence: evidence, overallNotes: '', decision: 'pending', startedAt: null,
     finishedAt: null, elapsedSeconds: 0, timerRunningSince: null };
@@ -76,7 +119,10 @@ export function validateState(raw: unknown): AppState {
     if (typeof c.name !== 'string' || c.name.length > 200 || typeof c.committee !== 'string' || c.committee.length > 100) throw new Error('بيانات متقدم غير صالحة.');
     if (!['not_started','in_progress','completed'].includes(String(c.status))) throw new Error('حالة المقابلة غير صالحة.');
     if (!['pending','accepted','rejected','waitlist'].includes(String(c.decision))) throw new Error('قرار المقابلة غير صالح.');
-    if (!Array.isArray(c.questions) || c.questions.length > QUESTION_IDS.length || c.questions.some(q=>typeof q !== 'string' || !QUESTION_SET.has(q)) || new Set(c.questions).size!==c.questions.length) throw new Error('قائمة الأسئلة غير صالحة.');
+    if (!Array.isArray(c.questions) || c.questions.length > 1000 || c.questions.some(q=>typeof q !== 'string' || !isHistoricalQuestion(q))) throw new Error('قائمة الأسئلة غير صالحة.');
+    if(c.bankVersion!==undefined && c.bankVersion!==2)throw new Error('إصدار بنك الأسئلة غير مدعوم.');
+    if(c.bankVersion===2 && c.questions.some(q=>!QUESTION_SET.has(q)))throw new Error('قائمة الأسئلة الجديدة غير صالحة.');
+    if(c.archivedQuestions!==undefined && (!Array.isArray(c.archivedQuestions)||c.archivedQuestions.length>1000||c.archivedQuestions.some(q=>!isHistoricalQuestion(q))))throw new Error('سجل الأسئلة السابقة غير صالح.');
     if (!Number.isSafeInteger(c.slot) || Number(c.slot) <= 0 || !Number.isInteger(c.questionIndex)) throw new Error('ترقيم المقابلة غير صالح.');
     const scores: Record<string,number|null> = {};
     for (const id of CRITERION_IDS) {
@@ -91,12 +137,12 @@ export function validateState(raw: unknown): AppState {
       return out;
     };
     const questionNotes = strRecord(c.questionNotes);
-    if (Object.keys(questionNotes).some(k=>!QUESTION_SET.has(k))) throw new Error('ملاحظات مرتبطة بسؤال غير معروف.');
+    if (Object.keys(questionNotes).some(k=>!isValidAttemptKey(k))) throw new Error('ملاحظات مرتبطة بسؤال غير معروف.');
     const scoreRecord = c.questionScores === undefined ? {} : c.questionScores;
     if (!scoreRecord || typeof scoreRecord !== 'object' || Array.isArray(scoreRecord)) throw new Error('درجات الأسئلة غير صالحة.');
     const questionScores: Record<string,number> = {};
     for (const [key,value] of Object.entries(scoreRecord)) {
-      if (!QUESTION_SET.has(key) || typeof value !== 'number' || !Number.isInteger(value) || value<0 || value>5) throw new Error('درجة سؤال غير صالحة.');
+      if (!isValidAttemptKey(key) || typeof value !== 'number' || !Number.isInteger(value) || value<0 || value>5) throw new Error('درجة سؤال غير صالحة.');
       questionScores[key]=value;
     }
     const rosterKey = c.rosterKey === undefined ? undefined : c.rosterKey;
@@ -105,21 +151,42 @@ export function validateState(raw: unknown): AppState {
     if (Object.keys(criteriaEvidence).some(k=>!CRITERION_IDS.includes(k))) throw new Error('دليل مرتبط بمعيار غير معروف.');
     if (!c.questionAsked || typeof c.questionAsked !== 'object' || Array.isArray(c.questionAsked)) throw new Error('حالة الأسئلة غير صالحة.');
     const questionAsked: Record<string, boolean> = {};
-    for (const [key,val] of Object.entries(c.questionAsked)) {if (!QUESTION_SET.has(key) || typeof val !== 'boolean') throw new Error('حالة سؤال غير صالحة.'); questionAsked[key]=val;}
+    for (const [key,val] of Object.entries(c.questionAsked)) {if (!isValidAttemptKey(key) || typeof val !== 'boolean') throw new Error('حالة سؤال غير صالحة.'); questionAsked[key]=val;}
     if (typeof c.overallNotes !== 'string' || c.overallNotes.length > 15000) throw new Error('الملاحظات العامة غير صالحة.');
     const elapsed = Number(c.elapsedSeconds);
     if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed > 1e9) throw new Error('وقت المقابلة غير صالح.');
     const since = c.timerRunningSince;
     if (since !== null && !(typeof since === 'number' && Number.isFinite(since) && since>0)) throw new Error('المؤقت غير صالح.');
     const date = (value:unknown):string|null=>value===null?null:(typeof value==='string' && !Number.isNaN(Date.parse(value)) ? value:(()=>{throw new Error('تاريخ غير صالح.');})());
+    // One-time non-destructive migration from the previous 36-card queue.
+    // Keep previous ratings/notes even when their cards are retired from the active bank.
+    let questions:string[];
+    let questionIndex:number;
+    let archivedQuestions:string[]|undefined=Array.isArray(c.archivedQuestions)?[...c.archivedQuestions]:undefined;
+    if(c.bankVersion===2){
+      questions=(c.questions as string[]).length?[...(c.questions as string[])]:questionSequence(c.slot as number);
+      questionIndex=Math.max(0,Math.min(Number(c.questionIndex),questions.length-1));
+    }else{
+      archivedQuestions=[...(c.questions as string[])];
+      if(c.status==='not_started'){
+        questions=questionSequence(c.slot as number);
+        questionIndex=0;
+      }else{
+        const original=c.questions as string[];
+        const currentIndex=Math.max(0,Math.min(Number(c.questionIndex),original.length-1));
+        const seenApproved=original.slice(0,currentIndex+1).filter(code=>QUESTION_SET.has(code));
+        questions=seenApproved.length?seenApproved:questionSequence(c.slot as number);
+        questionIndex=seenApproved.length?seenApproved.length-1:0;
+      }
+    }
     return {
-      id:c.id as string, slot: c.slot as number, name:c.name as string, committee:c.committee as string,
-      status:c.status as InterviewStatus, questions:[...(c.questions as string[]), ...questionSequence(c.slot as number).filter(id=>!(c.questions as string[]).includes(id))],
-      questionIndex: Math.max(0, Math.min(Number(c.questionIndex), Math.max(0,c.questions.length-1))),
+      id:c.id as string, slot:c.slot as number, name:c.name as string, committee:c.committee as string,
+      status:c.status as InterviewStatus, bankVersion:2, archivedQuestions,
+      questions, questionIndex,
       questionNotes, questionAsked, questionScores, rosterKey:rosterKey as string|undefined, criteriaScores:scores, criteriaEvidence,
       overallNotes:c.overallNotes as string, decision:c.decision as Decision,
-      startedAt: date(c.startedAt), finishedAt: date(c.finishedAt),
-      elapsedSeconds:elapsed, timerRunningSince: since as number|null
+      startedAt:date(c.startedAt), finishedAt:date(c.finishedAt),
+      elapsedSeconds:elapsed, timerRunningSince:since as number|null
     } as Candidate;
   });
   return { version:1, candidates, lastSavedAt: typeof obj.lastSavedAt === 'string' ? obj.lastSavedAt : new Date().toISOString() };
@@ -137,7 +204,7 @@ export function persistState(state: AppState): void {
 }
 export function getCriterionScore(candidate: Candidate, criterionId: string): number|null {
   const ratings = Object.entries(candidate.questionScores??{})
-    .filter(([id]) => QUESTIONS.find(q=>q.id===id)?.criterionId===criterionId)
+    .filter(([id]) => questionCriterionId(baseQuestionId(id))===criterionId)
     .map(([,score])=>score);
   if (ratings.length) return Math.round((ratings.reduce((a,b)=>a+b,0)/ratings.length)*10)/10;
   // Preserve legacy manual ratings from interviews recorded in the previous release.
@@ -188,14 +255,26 @@ export function csvCell(value:unknown):string {
 }
 export function resultsCsv(state:AppState):string {
   const head=['Slot','Name','Committee','Status','Decision','Coverage','Score / 100',...CRITERIA.map(c=>c.label),'Asked questions','Notes'];
-  const rows=state.candidates.map(c=>[c.slot,c.name,c.committee,c.status,c.decision,`${getCoverage(c)}/6`,getScore(c)??'Not Evaluated',...CRITERIA.map(cr=>getCriterionScore(c,cr.id)??'Not Evaluated'),c.questions.filter(q=>c.questionAsked[q]).join('; '),c.overallNotes]);
+  const rows=state.candidates.map(c=>[c.slot,c.name,c.committee,c.status,c.decision,`${getCoverage(c)}/6`,getScore(c)??'Not Evaluated',...CRITERIA.map(cr=>getCriterionScore(c,cr.id)??'Not Evaluated'),c.questions.map((_,i)=>questionAttemptKey(c,i)).filter(key=>c.questionAsked[key]).join('; '),c.overallNotes]);
   return '\uFEFF'+[head,...rows].map(r=>r.map(csvCell).join(',')).join('\r\n');
 }
 export function detailedCsv(state:AppState):string {
-  const rows:Array<(string|number)[]>=[['Slot','Name','Question code','Type','Question','Asked','Question score / 5','Criterion','Interviewer notes']];
-  for (const c of state.candidates) for (const code of c.questions) {
-    const q=QUESTIONS.find(x=>x.id===code);
-    if(q)rows.push([c.slot,c.name,code,q.kind,q.text,c.questionAsked[code]?'Yes':'No',c.questionScores?.[code]??'Not Evaluated',CRITERIA.find(cr=>cr.id===q.criterionId)?.label??'',c.questionNotes[code]??'']);
+  const rows:Array<(string|number)[]>=[['Slot','Name','Question code','Attempt','Type','Question','Asked','Question score / 5','Criterion','Interviewer notes']];
+  for(const c of state.candidates){
+    const activeKeys=new Set<string>();
+    for(let i=0;i<c.questions.length;i++){
+      const code=c.questions[i];
+      const key=questionAttemptKey(c,i);
+      activeKeys.add(key);
+      const q=QUESTIONS.find(x=>x.id===code);
+      rows.push([c.slot,c.name,code,key,q?.kind??'Legacy',q?.text??'Archived previous-bank question',c.questionAsked[key]?'Yes':'No',c.questionScores[key]??'Not Evaluated',CRITERIA.find(cr=>cr.id===questionCriterionId(code))?.label??'',c.questionNotes[key]??'']);
+    }
+    // Never silently discard a retired-card response from previous app versions.
+    for(const key of new Set([...Object.keys(c.questionScores),...Object.keys(c.questionNotes),...Object.keys(c.questionAsked)])){
+      if(activeKeys.has(key))continue;
+      const code=baseQuestionId(key);
+      rows.push([c.slot,c.name,code,key,'Legacy','Archived previous-bank question',c.questionAsked[key]?'Yes':'No',c.questionScores[key]??'Not Evaluated',CRITERIA.find(cr=>cr.id===questionCriterionId(code))?.label??'',c.questionNotes[key]??'']);
+    }
   }
   return '\uFEFF'+rows.map(row=>row.map(csvCell).join(',')).join('\r\n');
 }

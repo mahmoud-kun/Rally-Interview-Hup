@@ -1,5 +1,5 @@
-import { CRITERIA, PACKS, QUESTIONS } from './data/bank.js';
-import { type AppState, type Candidate, type Decision, initialState, loadState, persistState, newCandidate, getCoverage, getScore, getCriterionScore, mergeCandidateRoster, type RosterEntry, getElapsed, pauseTimer, resultsCsv, detailedCsv, validateState } from './store.js';
+import { CRITERIA, QUESTIONS } from './data/bank.js';
+import { type AppState, type Candidate, type Decision, initialState, loadState, persistState, newCandidate, getCoverage, getScore, getCriterionScore, questionAttemptKey, nextInterviewQuestion, previousInterviewQuestion, mergeCandidateRoster, type RosterEntry, getElapsed, pauseTimer, resultsCsv, detailedCsv, validateState } from './store.js';
 
 const $ = (s:string):HTMLElement|null => document.querySelector(s);
 const app = $('#app')!;
@@ -9,7 +9,6 @@ let persistError = stored.error;
 let activeFilter = 'all';
 let bankCategory = 'all';
 let bankQuery = '';
-let pickQuery = '';
 let expandedTwist = false;
 let expandedWatch = false;
 let toastTimeout = 0;
@@ -78,19 +77,14 @@ function overview(){
 }
 function panelHeading(kicker:string,title:string,trailing=''){return `<div class="section-bar"><div><div class="section-overline">${kicker}</div><h2>${title}</h2></div>${trailing}</div>`;}
 function formatTime(seconds:number){const s=Math.floor(seconds);return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;}
-function questionStep(c:Candidate,id:string,index:number){const q=QUESTIONS.find(q=>q.id===id)!; return `<button class="step-tab ${c.questionIndex===index?'selected':''}" data-action="jump-question" data-index="${index}" ${c.questionIndex===index?'aria-current="step"':''}><span class="step-number">${String(index+1).padStart(2,'0')}</span><span class="step-detail"><strong>${esc(q.id)}</strong><span>${esc(TYPE_LABEL[q.kind])}</span></span>${c.questionAsked[id]?`<span class="step-checked">${ic('check',14)}</span>`:''}</button>`;}
-function scoreCard(c:Candidate){return `<section class="panel score-panel" id="score-panel">${panelHeading('EVALUATION','معايير التقييم',`<span class="coverage-pill">${getCoverage(c)} / 6</span>`)}
-  <button class="score-back" data-action="jump-question-area">${ic('arrow',15)} الرجوع للسؤال</button><p class="score-intro">قيّم كل معيار من 0 إلى 5 بناءً على إجابات المتقدم. المعيار اللي متقاسش سيبه فاضي.</p>
-  <div class="criteria-stack">${CRITERIA.map((criterion,i)=>{const score=c.criteriaScores[criterion.id];return `<div class="criterion" data-criterion="${criterion.id}"><div class="criterion-top"><div class="criterion-name"><span class="criterion-index">${String(i+1).padStart(2,'0')}</span><div><strong>${esc(criterion.label)}</strong><small>${esc(criterion.description)}</small></div></div><span class="weight-pill">${criterion.weight}%</span></div><div class="score-options" role="group" aria-label="تقييم ${esc(criterion.label)}">${Array.from({length:6},(_,n)=>`<button type="button" class="score-option ${score===n?'selected':''}" data-action="rate" data-criterion="${criterion.id}" data-score="${n}" aria-label="${esc(criterion.label)}: ${n} من 5" aria-pressed="${score===n}">${n}</button>`).join('')}</div><div class="criterion-bottom"><span>${score===null?'لم يُقيَّم بعد':`${score} من 5`}</span>${score!==null?`<button class="link-button subtle" data-action="clear-rate" data-criterion="${criterion.id}">إلغاء التقييم</button>`:''}</div><label class="sr-only" for="evidence-${criterion.id}">دليل أو ملاحظة معيار ${esc(criterion.label)}</label><input id="evidence-${criterion.id}" class="criterion-evidence" placeholder="دليل مختصر من الإجابة (اختياري)" data-bind="criterion-evidence" data-criterion="${criterion.id}" value="${esc(c.criteriaEvidence[criterion.id]??'')}"></div>`}).join('')}</div>
-  <div class="score-summary"><div><span>OVERALL SCORE</span><strong>${getScore(c)===null?'— / 100':`${getScore(c)} / 100`}</strong></div><p>${getScore(c)===null?'النتيجة النهائية هتظهر بعد تقييم المعايير الستة.':'تقييم موزون حسب الأوزان المعتمدة.'}</p></div></section>`;}
 function interview(id:string){
   const c=findCandidate(id); if(!c){go('overview');return;}
   if(c.status==='not_started'){c.status='in_progress';c.startedAt=new Date().toISOString();c.timerRunningSince=Date.now();save();}
   const q=QUESTIONS.find(q=>q.id===c.questions[c.questionIndex]);
   const criterion=q?CRITERIA.find(k=>k.id===q.criterionId):undefined;
-  const grade=q?c.questionScores?.[q.id]:undefined;
-  const count=c.questions.length;
-  const visited=Object.keys(c.questionScores??{}).length;
+  const attemptKey=questionAttemptKey(c,c.questionIndex);
+  const grade=q?c.questionScores?.[attemptKey]:undefined;
+  const visited=c.questions.filter((_,i)=>c.questionScores?.[questionAttemptKey(c,i)]!==undefined).length;
   app.innerHTML=`<a href="#interview-main" class="skip-link">انتقل إلى السؤال</a><div class="session-shell">
     <header class="session-header">
       <button class="session-back" data-action="back-overview" aria-label="العودة لقائمة المتقدمين">${ic('arrow',18)} <span>المتقدمين</span></button>
@@ -99,14 +93,14 @@ function interview(id:string){
     </header>
     <main class="session-content" id="interview-main">
       ${q&&criterion?`<section class="focus-question" aria-label="بطاقة السؤال">
-        <div class="focus-kicker"><div><span class="focus-code">${esc(q.id)}</span><span class="focus-type">${esc(TYPE_LABEL[q.kind])}</span></div><span>${c.questionIndex+1} / ${count}</span></div>
+        <div class="focus-kicker"><div><span class="focus-code">${esc(q.id)}</span><span class="focus-type">${esc(TYPE_LABEL[q.kind])}</span></div><span>الجولة ${Math.floor(c.questionIndex/6)+1} · سؤال ${c.questionIndex%6+1}/6</span></div>
         <div class="focus-scroll"><h1 class="focus-prompt">${esc(q.text)}</h1>
           <div class="focus-guidance"><div><strong>TWIST / متغير</strong><p>${esc(q.twist)}</p></div><div><strong>WATCH / ملاحظة</strong><p>${esc(q.watch)}</p></div></div>
         </div>
-        <div class="focus-assessment"><div class="focus-criterion"><div><small>CRITERION · ${criterion.weight}%</small><strong dir="ltr">${esc(criterion.label)}</strong></div><span>${grade===undefined?'غير مُقيّم':grade+' / 5'}${grade===undefined?'':` · <button class="link-button" data-action="clear-question-rate" data-question="${esc(q.id)}" aria-label="مسح تقييم السؤال">مسح</button>`}</span></div>
-          <div class="focus-ratings" role="group" aria-label="تقييم ${esc(criterion.label)} للسؤال ${esc(q.id)}">${Array.from({length:6},(_,n)=>`<button class="focus-score ${grade===n?'selected':''}" type="button" aria-pressed="${grade===n}" data-action="rate-question" data-score="${n}" data-question="${esc(q.id)}">${n}</button>`).join('')}</div>
+        <div class="focus-assessment"><div class="focus-criterion"><div><small>CRITERION · ${criterion.weight}%</small><strong dir="ltr">${esc(criterion.label)}</strong></div><span>${grade===undefined?'غير مُقيّم':grade+' / 5'}${grade===undefined?'':` · <button class="link-button" data-action="clear-question-rate" data-question="${esc(attemptKey)}" aria-label="مسح تقييم السؤال">مسح</button>`}</span></div>
+          <div class="focus-ratings" role="group" aria-label="تقييم ${esc(criterion.label)} للسؤال ${esc(q.id)}">${Array.from({length:6},(_,n)=>`<button class="focus-score ${grade===n?'selected':''}" type="button" aria-pressed="${grade===n}" data-action="rate-question" data-score="${n}" data-question="${esc(attemptKey)}">${n}</button>`).join('')}</div>
           <div class="focus-note-row"><label for="focus-note">ملاحظاتك على الإجابة</label><span>حفظ تلقائي</span></div>
-          <textarea id="focus-note" data-bind="question-note" data-question="${esc(q.id)}" rows="2" placeholder="ملاحظة سريعة عن إجابته...">${esc(c.questionNotes[q.id]??'')}</textarea>
+          <textarea id="focus-note" data-bind="question-note" data-question="${esc(attemptKey)}" rows="2" placeholder="ملاحظة سريعة عن إجابته...">${esc(c.questionNotes[attemptKey]??'')}</textarea>
         </div>
       </section>`:`<div class="empty-state">مفيش أسئلة. افتح بنك الأسئلة لإضافة أسئلة.</div>`}
       <footer class="session-controls"><button class="session-previous" data-action="prev-question" aria-label="السؤال السابق">${ic('arrow',18)} السابق</button><div class="session-progress"><strong>${visited}</strong><span>أسئلة متقيّمة</span><small>${getCoverage(c)} / 6 معايير</small></div><button class="session-next" data-action="next-question">التالي ${ic('arrow',18)}</button></footer>
@@ -117,7 +111,7 @@ function interview(id:string){
 function bankQuestionCard(q:typeof QUESTIONS[number], id?:string){return `<article class="bank-card"><div class="bank-card-header"><span class="question-code">${q.id}</span><span class="type-tag">${esc(TYPE_LABEL[q.kind])}</span></div><p class="bank-category">${esc(q.category)}</p><h3>${esc(q.text)}</h3><div class="bank-card-footer"><span>${ic('book',15)} ${esc(CRITERIA.find(c=>c.id===q.criterionId)?.label)}</span>${id?`<button class="mini-button" data-action="add-question" data-id="${esc(id)}" data-question="${q.id}">${ic('plus',15)} إضافة</button>`:''}</div></article>`;}
 function getFilteredQuestions(){return QUESTIONS.filter(q=>(bankCategory==='all'||q.criterionId===bankCategory)&&(!bankQuery||[q.id,q.text,q.category,q.twist].some(t=>t.toLowerCase().includes(bankQuery.toLowerCase()))));}
 function bankCards(){return getFilteredQuestions().map(q=>bankQuestionCard(q)).join('') || `<div class="empty-state">مفيش أسئلة مطابقة. جرّب كلمة بحث تانية.</div>`;}
-function bank(){shell(`<div class="page-head"><div><div class="eyebrow">RESOURCE LIBRARY <span class="eyebrow-separator"></span> OPERATIONS</div><h1>بنك <span>الأسئلة.</span></h1><p class="page-subtitle">36 سؤال وموقف عملي من البنك المعتمد، مع متغيرات اختيارية وملاحظات للمحاور.</p></div><div class="head-counter">36 <span>QUESTION CARDS</span></div></div><div class="panel bank-container"><div class="bank-toolbar"><label class="search-input">${ic('search',18)}<span class="sr-only">بحث في الأسئلة</span><input id="bank-search" placeholder="ابحث بكلمة أو كود السؤال..." value="${esc(bankQuery)}" autocomplete="off"/></label><div class="toolbar-caption">${ic('filter',18)} فلترة حسب المعيار</div></div><div class="category-chips" role="group" aria-label="فلترة المعايير"><button class="chip ${bankCategory==='all'?'selected':''}" data-action="bank-filter" data-category="all">كل الأسئلة</button>${CRITERIA.map(c=>`<button class="chip ${bankCategory===c.id?'selected':''}" data-action="bank-filter" data-category="${c.id}">${esc(c.label)}</button>`).join('')}</div><div class="bank-grid" id="question-grid">${bankCards()}</div></div>`, 'bank');}
+function bank(){shell(`<div class="page-head"><div><div class="eyebrow">RESOURCE LIBRARY <span class="eyebrow-separator"></span> OPERATIONS</div><h1>بنك <span>الأسئلة.</span></h1><p class="page-subtitle">15 سؤال وموقف معتمدين من الملف الرسمي، مع متغيرات اختيارية وملاحظات للمحاور.</p></div><div class="head-counter">15 <span>QUESTION CARDS</span></div></div><div class="panel bank-container"><div class="bank-toolbar"><label class="search-input">${ic('search',18)}<span class="sr-only">بحث في الأسئلة</span><input id="bank-search" placeholder="ابحث بكلمة أو كود السؤال..." value="${esc(bankQuery)}" autocomplete="off"/></label><div class="toolbar-caption">${ic('filter',18)} فلترة حسب المعيار</div></div><div class="category-chips" role="group" aria-label="فلترة المعايير"><button class="chip ${bankCategory==='all'?'selected':''}" data-action="bank-filter" data-category="all">كل الأسئلة</button>${CRITERIA.map(c=>`<button class="chip ${bankCategory===c.id?'selected':''}" data-action="bank-filter" data-category="${c.id}">${esc(c.label)}</button>`).join('')}</div><div class="bank-grid" id="question-grid">${bankCards()}</div></div>`, 'bank');}
 function results(){const full=state.candidates.filter(c=>c.status==='completed' && getScore(c)!==null).sort((a,b)=>getScore(b)!-getScore(a)!);
  const partial=state.candidates.filter(c=>c.status==='completed' && getScore(c)===null);
  shell(`<div class="page-head"><div><div class="eyebrow">INTERVIEW OUTCOMES <span class="eyebrow-separator"></span> 2026</div><h1>النتائج <span>والقرارات.</span></h1><p class="page-subtitle">الترتيب بيظهر للمقابلات المكتملة في المعايير الستة فقط؛ أي معيار ناقص لا يتحسب بصفر.</p></div><button class="button primary head-button" data-action="export-csv">${ic('download',18)} تصدير Excel / CSV</button></div>
@@ -130,7 +124,6 @@ function render(){const path=route();expandedTwist=false;expandedWatch=false;if(
 function saveDownload(content:string,filename:string,mime:string){const blob=new Blob([content],{type:mime});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);}
 function showDialog(body:string,headline:string,footer=''){const root=$('#modal-root');if(!root)return;root.innerHTML=`<dialog class="app-dialog" aria-labelledby="dialog-title"><div class="dialog-header"><h2 id="dialog-title">${headline}</h2><button class="icon-button" data-action="close-dialog" aria-label="إغلاق">${ic('close',19)}</button></div><div class="dialog-body">${body}</div>${footer?`<div class="dialog-footer">${footer}</div>`:''}</dialog>`;const el=root.querySelector('dialog')!;el.addEventListener('click',e=>{if(e.target===el)el.close();});el.addEventListener('close',()=>{root.replaceChildren();});el.showModal();(el.querySelector('input,button') as HTMLElement|null)?.focus();}
 function closeDialog(){($('#modal-root dialog') as HTMLDialogElement|null)?.close();}
-function pickQuestionDialog(candidate:Candidate){pickQuery='';const current=new Set(candidate.questions);showDialog(`<label class="search-input picker-search">${ic('search')}<span class="sr-only">بحث في الأسئلة</span><input id="picker-search" placeholder="ابحث في الـ36 سؤال..." autocomplete="off"></label><p class="picker-hint">الأسئلة اللي بالفعل في المقابلة مش هتظهر تاني.</p><div id="picker-list" class="picker-list">${QUESTIONS.filter(q=>!current.has(q.id)).map(q=>`<button class="picker-row" data-action="add-question" data-id="${esc(candidate.id)}" data-question="${q.id}"><span><b>${q.id}</b><small>${esc(q.text)}</small></span>${ic('plus',18)}</button>`).join('')}</div>`,'اختيار سؤال إضافي');}
 function endDialog(c:Candidate){const coverage=getCoverage(c);showDialog(`<div class="confirmation"><div class="confirm-icon">${ic(coverage===6?'check':'info',25)}</div><p>${coverage===6?'تم تقييم المعايير الستة. يمكنك إنهاء الجلسة ومراجعة القرار من صفحة النتائج.':`تم تقييم <b>${coverage} من 6</b> معايير فقط. تقدر تنهي الجلسة، لكن <b>مش هيظهر Total/100</b> لحد ما تكمل الباقي.`}</p></div>`,'إنهاء المقابلة',`<button class="button secondary" data-action="close-dialog">إلغاء</button><button class="button primary" data-action="confirm-finish" data-id="${esc(c.id)}">تأكيد الإنهاء</button>`);}
 function addCandidateDialog(){showDialog(`<form id="add-candidate-form"><label class="form-label" for="candidate-name">اسم المتقدم</label><input class="text-field" id="candidate-name" name="name" maxlength="200" placeholder="اكتب اسم المتقدم" required><label class="form-label" for="candidate-committee">اللجنة</label><input class="text-field" id="candidate-committee" name="committee" maxlength="100" value="Operations" required></form>`,'إضافة متقدم',`<button class="button secondary" data-action="close-dialog">إلغاء</button><button class="button primary" data-action="save-candidate">إضافة للقائمة</button>`);}
 function renameDialog(c:Candidate){showDialog(`<form id="rename-form"><label class="form-label" for="rename-input">اسم المتقدم</label><input class="text-field" id="rename-input" name="name" maxlength="200" required value="${esc(c.name)}" placeholder="اسم المتقدم"></form>`,'تعديل اسم المتقدم',`<button class="button secondary" data-action="close-dialog">إلغاء</button><button class="button primary" data-action="save-name" data-id="${esc(c.id)}">حفظ الاسم</button>`);}
@@ -170,16 +163,16 @@ function action(action:string,el:HTMLElement){
     case 'jump-question-area':$('.question-panel')?.scrollIntoView({behavior:'smooth',block:'start'});break;
     case 'toggle-timer':if(c){if(c.timerRunningSince)pauseTimer(c);else c.timerRunningSince=Date.now();save();updateQuestionView();}break;
     case 'jump-question':if(c){c.questionIndex=Number(el.dataset.index)||0;save();updateQuestionView();}break;
-    case 'next-question':if(c&&c.questions.length){c.questionIndex=(c.questionIndex+1)%c.questions.length;save();updateQuestionView();}break;
-    case 'prev-question':if(c&&c.questions.length){c.questionIndex=(c.questionIndex-1+c.questions.length)%c.questions.length;save();updateQuestionView();}break;
+    case 'next-question':if(c&&c.questions.length){nextInterviewQuestion(c);save();updateQuestionView();}break;
+    case 'prev-question':if(c&&c.questions.length){previousInterviewQuestion(c);save();updateQuestionView();}break;
     case 'toggle-twist':expandedTwist=!expandedTwist;el.classList.toggle('open',expandedTwist);el.setAttribute('aria-expanded',String(expandedTwist));{const question=QUESTIONS.find(q=>q.id===currentCandidate()?.questions[currentCandidate()?.questionIndex??0]);if(question){const box=$('.reveal-box:not(.watch-box)');if(box)box.remove();else{const watch=$('.watch-box');(watch?.parentElement??$('.question-tools')?.parentElement)?.querySelector('.question-tools')?.insertAdjacentHTML('afterend',`<div class="reveal-box"><span>TWIST</span><p>${esc(question.twist)}</p></div>`);}}}break;
     case 'toggle-watch':{expandedWatch=!expandedWatch;el.classList.toggle('open',expandedWatch);el.setAttribute('aria-expanded',String(expandedWatch));const question=QUESTIONS.find(q=>q.id===currentCandidate()?.questions[currentCandidate()?.questionIndex??0]);if(question){const box=$('.watch-box');if(box)box.remove();else $('.question-tools')?.insertAdjacentHTML('afterend',`<div class="reveal-box watch-box"><span>WATCH FOR</span><p>${esc(question.watch)}</p></div>`);}break;}
     case 'mark-asked':if(c){const code=c.questions[c.questionIndex];if(code){c.questionAsked[code]=!c.questionAsked[code];save();updateQuestionView();}}break;
-    case 'clear-question-rate':if(c){const code=el.dataset.question;if(code&&c.questionScores){delete c.questionScores[code];save();updateQuestionView();}}break;
-    case 'rate-question':if(c){const code=el.dataset.question;const score=Number(el.dataset.score);if(code&&c.questions.includes(code)&&Number.isInteger(score)&&score>=0&&score<=5){if(!c.questionScores)c.questionScores={};c.questionScores[code]=score;c.questionAsked[code]=true;save();updateQuestionView();}}break;
+    case 'clear-question-rate':if(c){const code=el.dataset.question;if(code===questionAttemptKey(c,c.questionIndex)&&c.questionScores){delete c.questionScores[code];save();updateQuestionView();}}break;
+    case 'rate-question':if(c){const code=el.dataset.question;const score=Number(el.dataset.score);if(code===questionAttemptKey(c,c.questionIndex)&&Number.isInteger(score)&&score>=0&&score<=5){if(!c.questionScores)c.questionScores={};c.questionScores[code]=score;c.questionAsked[code]=true;save();updateQuestionView();}}break;
     case 'clear-rate':if(c){const key=el.dataset.criterion!;if(CRITERIA.some(x=>x.id===key)){c.criteriaScores[key]=null;save();updateQuestionView();}}break;
-    case 'pick-question':if(c)pickQuestionDialog(c);break;
-    case 'add-question':if(c){const code=el.dataset.question!;if(QUESTIONS.some(q=>q.id===code)&&!c.questions.includes(code)){c.questions.push(code);c.questionIndex=c.questions.length-1;save();closeDialog();updateQuestionView();toast('اتضاف السؤال للمقابلة.');}}break;
+    
+    /* Automatic six-criterion rounds replace manual question selection. */
     case 'finish':if(c)endDialog(c);break;
     case 'confirm-finish':if(c){pauseTimer(c);c.status='completed';c.finishedAt=new Date().toISOString();save();closeDialog();go('results');toast('تم إنهاء المقابلة.');}break;
     case 'bank-filter':bankCategory=el.dataset.category??'all';bank();break;
@@ -207,9 +200,6 @@ document.addEventListener('input',e=>{
     save();
   }
   if(target.id==='bank-search'){bankQuery=target.value;const grid=$('#question-grid');if(grid)grid.innerHTML=bankCards();}
-  if(target.id==='picker-search'){
-    pickQuery=target.value.toLowerCase();const c=currentCandidate();const list=$('#picker-list');if(c&&list)list.innerHTML=QUESTIONS.filter(q=>!c.questions.includes(q.id)&&[q.id,q.text,q.category].some(v=>v.toLowerCase().includes(pickQuery))).map(q=>`<button class="picker-row" data-action="add-question" data-id="${esc(c.id)}" data-question="${q.id}"><span><b>${q.id}</b><small>${esc(q.text)}</small></span>${ic('plus',18)}</button>`).join('')||'<div class="empty-state">مفيش نتائج.</div>';
-  }
 });
 document.addEventListener('change',e=>{
  const target=e.target as HTMLSelectElement;
